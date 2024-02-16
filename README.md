@@ -4,9 +4,12 @@
     <a href="https://github.com/Squeezebits/QUICK/releases">
         <img alt="GitHub - Releases" src="https://img.shields.io/github/release/Squeezebits/QUICK.svg">
     </a>
+    <a href="https://arxiv.org/abs/2402.10076">
+        <img src="https://img.shields.io/badge/arXiv-2402.10076-b31b1b.svg" alt="arXiv">
+    </a>
 </p>
 
-Introducing QUICK, a collection of novel optimized CUDA kernels designed for faster inference of quantized Large Language Models (LLMs). QUICK addresses the shared memory write-back bank conflict issue in state-of-the-art mixed precision General Matrix Multiplication (GEMM) kernels.
+Introducing [QUICK](https://arxiv.org/abs/2402.10076), a collection of novel optimized CUDA kernels designed for faster inference of quantized Large Language Models (LLMs). QUICK addresses the shared memory write-back bank conflict issue in state-of-the-art mixed precision General Matrix Multiplication (GEMM) kernels.
 
 ​![Computation overview of original kernel and QUICK](./.github/images/compute_path.png)​​
 
@@ -201,6 +204,16 @@ We are actively working on the integration of QUICK into widely-used LLM framewo
 
 </details>
 
-## 📚 Reference
+## 📚 Cite
 
-Our whitepaper is coming to arxiv. Stay tuned!
+If you find our code or QUICK useful for your research, please consider citing:
+```
+@misc{kim2024quick,
+      title={QUICK: Quantization-aware Interleaving and Conflict-free Kernel for efficient LLM inference}, 
+      author={Taesu Kim and Jongho Lee and Daehyun Ahn and Sarang Kim and Jiwoong Choi and Minkyu Kim and Hyungjun Kim},
+      year={2024},
+      eprint={2402.10076},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG}
+}
+```
