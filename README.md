@@ -33,7 +33,7 @@ QUICK rearranges the quantized weight matrix offline to remove the bank conflict
 
 - Your GPU(s) need to have a Compute Capability of 7.5 or higher. QUICK is currently best optimized to the Ampere architecture.
 - To install this package, please use CUDA 11.8 or higher.
-- For optimal performance, the inference of LLMs requires additional optimized CUDA kernels for layers like layernorm and fused multi-head attention. Currently, QUICK is solely focused on improving mixed precision GEMM operations and does not include such kernels. Therefore, please install the <a href="https://github.com/casper-hansen/AutoAWQ_kernels/releases">AutoAWQ_kernels</a> package for such layers.
+- For optimal performance, the inference of LLMs requires additional optimized CUDA kernels for layers like layernorm and fused multi-head attention. Currently, QUICK is solely focused on improving mixed precision GEMM operations and does not include such kernels. Therefore, please install the <a href="https://github.com/casper-hansen/AutoAWQ_kernels">AutoAWQ_kernels</a> package for such layers.
 
 ### 🏗️ Build from source
 - Build from the master branch (Recommended):
