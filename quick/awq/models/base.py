@@ -419,7 +419,11 @@ class BaseAWQForCausalLM(nn.Module):
             named_linears = exclude_layers_to_not_quantize(
                 named_linears, quant_config.modules_to_not_convert
             )
-            
+            gpu_A100 = False
+            gpu_device = torch.cuda.get_device_name()
+            if 'A100' in gpu_device and 'A1000' not in gpu_device:
+                gpu_A100 = True
+                
             # Replace nn.Linear with WQLinear
             for name, module in named_linears.items():
                 if version == "QUICK":
@@ -433,9 +437,14 @@ class BaseAWQForCausalLM(nn.Module):
                 elif version == "GEMV":
                     q_linear_module = WQLinear_GEMV
 
-                q_linear = q_linear_module.from_linear(
-                    module, quant_config.w_bit, quant_config.q_group_size, True
-                )
+                if version == "QUICK" and gpu_A100:
+                    q_linear = q_linear_module.from_linear(
+                        module, quant_config.w_bit, quant_config.q_group_size, True, k_split_1=16, k_split_2=16
+                    )
+                else:
+                    q_linear = q_linear_module.from_linear(
+                        module, quant_config.w_bit, quant_config.q_group_size, True
+                    )
                 q_linear.to(next(layer.parameters()).device)
                 set_op_by_name(layer, name, q_linear)
 

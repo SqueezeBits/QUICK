@@ -33,7 +33,7 @@ class ScaledActivation(nn.Module):
         return self.act(x) / self.scales.view(1, 1, -1).to(x.device)
 
 class WQLinear_QUICK(nn.Module):
-    def __init__(self, w_bit, group_size, in_features, out_features, bias, dev):
+    def __init__(self, w_bit, group_size, in_features, out_features, bias, dev, k_split_1, k_split_2):
         super().__init__()
         
         if w_bit not in [4]:
@@ -43,6 +43,8 @@ class WQLinear_QUICK(nn.Module):
         self.out_features = out_features
         self.w_bit = w_bit
         self.group_size = group_size if group_size != -1 else in_features
+        self.k_split_1 = k_split_1
+        self.k_split_2 = k_split_2
         # quick sanity check (make sure aligment)
         assert self.in_features % self.group_size == 0
         assert out_features % (32 // self.w_bit) == 0
@@ -56,8 +58,8 @@ class WQLinear_QUICK(nn.Module):
             self.bias = None
 
     @classmethod
-    def from_linear(cls, linear, w_bit, group_size, init_only=False, scales=None, zeros=None):
-        awq_linear = cls(w_bit, group_size, linear.in_features, linear.out_features, linear.bias is not None, linear.weight.device)
+    def from_linear(cls, linear, w_bit, group_size, init_only=False, scales=None, zeros=None, k_split_1=2, k_split_2=8):
+        awq_linear = cls(w_bit, group_size, linear.in_features, linear.out_features, linear.bias is not None, linear.weight.device, k_split_1, k_split_2)
         if init_only:  # just prepare for loading sd
             return awq_linear
 
@@ -157,9 +159,9 @@ class WQLinear_QUICK(nn.Module):
     def forward(self, x):
         out_shape = x.shape[:-1] + (self.out_features, )
         if self.out_features > self.in_features:
-            out = gemm_forward_cuda_quick(x.reshape(-1, x.shape[-1]), self.qweight, self.scales, self.qzeros, 2)
+            out = gemm_forward_cuda_quick(x.reshape(-1, x.shape[-1]), self.qweight, self.scales, self.qzeros, self.k_split_1)
         else:
-            out = gemm_forward_cuda_quick(x.reshape(-1, x.shape[-1]), self.qweight, self.scales, self.qzeros, 8)
+            out = gemm_forward_cuda_quick(x.reshape(-1, x.shape[-1]), self.qweight, self.scales, self.qzeros, self.k_split_2)
         out = out + self.bias if self.bias is not None else out
         return out.reshape(out_shape)
     
