@@ -56,7 +56,7 @@ python examples/basic_quant.py --model_path </path/to/hf-model> --quant_path </p
 ```
 
 
-2. Evaluation: Evalutate the quantized model on several tasks (we tested on 'wikitext' dataset)
+2. Evaluation: Evaluate the quantized model on several tasks (we tested on 'wikitext' dataset)
 ```
 python examples/eval.py --model_path </path/to/quant-model> --tasks <tasks_to_evaluate>
 ```
