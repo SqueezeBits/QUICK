@@ -132,6 +132,7 @@ class AwqQuantizer:
                 if self.version == 'QUICK':
                     self._apply_quant_attn(self.modules[i])
                     named_linears = get_named_linears(self.modules[i])
+                    named_linears = exclude_layers_to_not_quantize(named_linears, self.modules_to_not_convert)
                 self._apply_quant(self.modules[i], named_linears)
             clear_memory()
 
