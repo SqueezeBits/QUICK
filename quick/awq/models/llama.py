@@ -89,13 +89,12 @@ class LlamaFuser:
         for module in tqdm.tqdm(self.model.model.layers, desc="Fusing layers..."):
             device = next(iter(module.state_dict().values())).device
             if self.model.config.quantization_config['version'] == 'quick':
-                qkv = module.self_attn.qkv_proj
+                qkv = fuse_qkv_quick(
+                    module, module.self_attn.q_proj, module.self_attn.k_proj, module.self_attn.v_proj
+                )
             else:
-                qkv = fuse_qkv(
-                    module,
-                    module.self_attn.q_proj,
-                    module.self_attn.k_proj,
-                    module.self_attn.v_proj
+                qkv = fuse_qkv( 
+                    module, module.self_attn.q_proj, module.self_attn.k_proj, module.self_attn.v_proj
                 )
             norm_1 = FasterTransformerRMSNorm(
                 module.input_layernorm.weight,

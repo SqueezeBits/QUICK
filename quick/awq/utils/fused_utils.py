@@ -53,9 +53,7 @@ def prepare_attention_mask(seqlen, start_pos, device, type_as: torch.Tensor):
 def fuse_qkv(module, q_proj, k_proj, v_proj):
     bias = torch.cat([q_proj.bias, k_proj.bias, v_proj.bias], dim=0) if q_proj.bias is not None else None
 
-    if isinstance(q_proj, WQLinear_QUICK):
-        q_linear = WQLinear_QUICK
-    elif isinstance(q_proj, WQLinear_GEMV):
+    if isinstance(q_proj, WQLinear_GEMV):
         q_linear = WQLinear_GEMV
     elif isinstance(q_proj, WQLinear_GEMM):
         q_linear = WQLinear_GEMM
@@ -90,6 +88,34 @@ def fuse_qkv(module, q_proj, k_proj, v_proj):
         qkv_layer.qweight = torch.cat([q_proj.qweight, k_proj.qweight, v_proj.qweight], dim=1)
         qkv_layer.qzeros = torch.cat([q_proj.qzeros, k_proj.qzeros, v_proj.qzeros], dim=1)
         qkv_layer.scales = torch.cat([q_proj.scales, k_proj.scales, v_proj.scales], dim=1)
+    
+    qkv_layer.bias = bias
+
+    return qkv_layer
+
+def fuse_qkv_quick(module, q_proj, k_proj, v_proj):
+    q_linear = WQLinear_QUICK
+    
+    assert q_proj.qweight.shape == k_proj.qweight.shape == v_proj.qweight.shape, "qweight shapes of q_proj, k_proj, and v_proj must be the same"
+    assert q_proj.qzeros.shape == k_proj.qzeros.shape == v_proj.qzeros.shape, "qzeros shapes of q_proj, k_proj, and v_proj must be the same"
+    assert q_proj.scales.shape == k_proj.scales.shape == v_proj.scales.shape, "scales shapes of q_proj, k_proj, and v_proj must be the same"
+
+    qkv_layer = q_linear(
+        q_proj.w_bit,
+        q_proj.group_size,
+        q_proj.in_features,
+        q_proj.out_features + k_proj.out_features + v_proj.out_features,
+        q_proj.bias is not None,
+        next(iter(module.state_dict().values())).device
+    )
+    
+    bias = torch.cat([q_proj.bias, k_proj.bias, v_proj.bias], dim=0) if q_proj.bias is not None else None
+    H, W = q_proj.qweight.shape
+    qkv_layer.qweight = torch.cat([q_proj.qweight.reshape(H//2, W*2), k_proj.qweight.reshape(H//2, W*2), v_proj.qweight.reshape(H//2, W*2)], dim=1).reshape(H, W*3)
+    H, W = q_proj.qzeros.shape
+    qkv_layer.qzeros = torch.cat([q_proj.qzeros.reshape(H*4,W//4), k_proj.qzeros.reshape(H*4,W//4), v_proj.qzeros.reshape(H*4,W//4)], dim=1).reshape(H, W*3)
+    H, W = q_proj.scales.shape
+    qkv_layer.scales = torch.cat([q_proj.scales.reshape(H*4,W//4), k_proj.scales.reshape(H*4,W//4), v_proj.scales.reshape(H*4,W//4)], dim=1).reshape(H, W*3)
     
     qkv_layer.bias = bias
 
