@@ -6,7 +6,7 @@ from quick.awq.evaluation import (
     evaluate_perplexity,
     eval_librispeech,
     eval_mmlu,
-    # eval_humaneval,
+    eval_humaneval,
     eval_kl_divergence,
 )
 

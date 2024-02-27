@@ -88,7 +88,6 @@ class LlamaFuser:
         module: OldLlamaDecoderLayer
         for module in tqdm.tqdm(self.model.model.layers, desc="Fusing layers..."):
             device = next(iter(module.state_dict().values())).device
-            import pdb; pdb.set_trace()
             if self.model.config.quantization_config['version'] == 'quick':
                 qkv = fuse_qkv_quick(
                     module, module.self_attn.q_proj, module.self_attn.k_proj, module.self_attn.v_proj
