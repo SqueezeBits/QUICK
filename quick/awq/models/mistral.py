@@ -1,7 +1,7 @@
 import tqdm
 from typing import List, Tuple
 from .base import BaseAWQForCausalLM
-from quick.awq.utils.fused_utils import fuse_qkv
+from quick.awq.utils.fused_utils import fuse_qkv, fuse_qkv_quick
 from quick.awq.modules.fused.block import LlamaLikeBlock
 from quick.awq.modules.fused.model import LlamaLikeModel
 from transformers.models.mistral.modeling_mistral import (
@@ -89,7 +89,9 @@ class MistralFuser:
         for module in tqdm.tqdm(self.model.model.layers, desc="Fusing layers..."):
             device = next(iter(module.state_dict().values())).device
             if self.model.config.quantization_config['version'] == 'quick':
-                qkv = module.self_attn.qkv_proj
+                qkv = fuse_qkv_quick(
+                    module, module.self_attn.q_proj, module.self_attn.k_proj, module.self_attn.v_proj
+                )
             else:
                 qkv = fuse_qkv(
                     module,

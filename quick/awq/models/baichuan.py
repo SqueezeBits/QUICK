@@ -93,12 +93,6 @@ class BaichuanFuser:
 
         for module in tqdm.tqdm(self.model.model.layers, desc="Fusing layers..."):
             device = next(iter(module.state_dict().values())).device
-            # qkv = fuse_qkv(
-            #     module,
-            #     module.self_attn.q_proj,
-            #     module.self_attn.k_proj,
-            #     module.self_attn.v_proj
-            # )
             qkv = module.self_attn.W_pack
             norm_1 = FasterTransformerRMSNorm(
                 module.input_layernorm.weight,

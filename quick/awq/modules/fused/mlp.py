@@ -3,10 +3,10 @@ import torch.nn.functional as F
 from quick.awq.modules.linear.gemm import WQLinear_GEMM
 from quick.awq.modules.linear.gemv import WQLinear_GEMV
 from quick.awq.modules.linear.quick import WQLinear_QUICK
+from quick_kernels import gemm_forward_cuda_quick # with QUICK CUDA kernels
 
 try:
     import awq_ext  # with CUDA kernels
-    from quick_kernels import gemm_forward_cuda_quick # with QUICK CUDA kernels
     AWQ_INSTALLED = True
 except:
     AWQ_INSTALLED = False
