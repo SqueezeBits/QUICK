@@ -27,7 +27,7 @@ def run_eval(
             model = AutoAWQForCausalLM.from_quantized(model_path, quant_file).to(device)
 
         tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-    # import pdb; pdb.set_trace()
+
     # Load adapter
     if len(tasks) == 1 and tasks[0] == 'wikitext':
         evaluate_perplexity(model, tokenizer)

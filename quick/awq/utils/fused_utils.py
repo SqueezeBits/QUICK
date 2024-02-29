@@ -1,4 +1,5 @@
 import torch
+from typing import List, Optional, Tuple
 from quick.awq.modules.linear.quick import WQLinear_QUICK
 from quick.awq.modules.linear.gemm import WQLinear_GEMM
 from quick.awq.modules.linear.gemv import WQLinear_GEMV
@@ -53,9 +54,7 @@ def prepare_attention_mask(seqlen, start_pos, device, type_as: torch.Tensor):
 def fuse_qkv(module, q_proj, k_proj, v_proj):
     bias = torch.cat([q_proj.bias, k_proj.bias, v_proj.bias], dim=0) if q_proj.bias is not None else None
 
-    if isinstance(q_proj, WQLinear_QUICK):
-        q_linear = WQLinear_QUICK
-    elif isinstance(q_proj, WQLinear_GEMV):
+    if isinstance(q_proj, WQLinear_GEMV):
         q_linear = WQLinear_GEMV
     elif isinstance(q_proj, WQLinear_GEMM):
         q_linear = WQLinear_GEMM
@@ -94,6 +93,71 @@ def fuse_qkv(module, q_proj, k_proj, v_proj):
     qkv_layer.bias = bias
 
     return qkv_layer
+
+def fuse_qkv_quick(module, q_proj, k_proj, v_proj):
+    q_linear = WQLinear_QUICK
+
+    qkv_layer = q_linear(
+        q_proj.w_bit,
+        q_proj.group_size,
+        q_proj.in_features,
+        q_proj.out_features + k_proj.out_features + v_proj.out_features,
+        q_proj.bias is not None,
+        next(iter(module.state_dict().values())).device
+    )
+    
+    bias = torch.cat([q_proj.bias, k_proj.bias, v_proj.bias], dim=0) if q_proj.bias is not None else None
+
+    qkv_layer.qweight = QUICK_cat(q_proj.qweight, k_proj.qweight, v_proj.qweight, options='qweight')
+    qkv_layer.qzeros = QUICK_cat(q_proj.qzeros, k_proj.qzeros, v_proj.qzeros, options='qzeros')
+    qkv_layer.scales = QUICK_cat(q_proj.scales, k_proj.scales, v_proj.scales, options='scales')
+    
+    qkv_layer.bias = bias
+
+    return qkv_layer
+
+def QUICK_cat(*input_layers: torch.Tensor, options: str, reshape_dims: Optional[Tuple[int, int]] = None) -> torch.Tensor:
+    """
+    Concatenates multiple input layers after reshaping based on specified options for QUICK.
+
+    Args:
+        *input_layers: Variable number of tensor layers to concatenate.
+        options: A string indicating how the layers should be reshaped ('qweight', 'qzeros', or 'scales').
+        reshape_dims: Optional tuple indicating custom dimensions for reshaping. If None, default settings are used.
+
+    Returns:
+        torch.Tensor: The concatenated and reshaped layers.
+
+    Raises:
+        ValueError: If the options provided are invalid or if input layers have incompatible shapes.
+    """
+    # Check if there are at least two layers to concatenate
+    if len(input_layers) < 2:
+        raise ValueError("At least two input layers are required")
+
+    # Check for shape compatibility
+    H, W = input_layers[0].shape
+    for layer in input_layers[1:]:
+        if layer.shape != input_layers[0].shape:
+            raise ValueError("All input layers must have the same shape")
+
+    # Determine reshape dimensions based on options
+    if not reshape_dims:
+        reshape_dims = {
+            'qweight': (H // 2, W * 2),
+            'qzeros': (H * 4, W // 4),
+            'scales': (H * 4, W // 4)
+        }.get(options)
+
+    if reshape_dims is None:
+        raise ValueError("Unknown options provided or invalid reshape dimensions")
+
+    # Reshape and concatenate the input layers
+    layers_to_cat = [layer.reshape(*reshape_dims) for layer in input_layers]
+    output_layer = torch.cat(layers_to_cat, dim=1).reshape(H, -1)
+
+    return output_layer
+
 
 def get_attention_shapes(attention_shapes, max_seq_len, cache_batch_size, n_heads, n_kv_heads, head_dim):
     if attention_shapes is not None:

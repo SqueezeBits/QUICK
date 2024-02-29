@@ -33,7 +33,7 @@ class ScaledActivation(nn.Module):
         return self.act(x) / self.scales.view(1, 1, -1).to(x.device)
 
 class WQLinear_QUICK(nn.Module):
-    def __init__(self, w_bit, group_size, in_features, out_features, bias, dev, k_split_1, k_split_2):
+    def __init__(self, w_bit, group_size, in_features, out_features, bias, dev, k_split_1=2, k_split_2=8):
         super().__init__()
         
         if w_bit not in [4]:

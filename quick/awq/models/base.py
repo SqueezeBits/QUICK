@@ -140,7 +140,7 @@ class BaseAWQForCausalLM(nn.Module):
     @staticmethod
     def fuse_layers(model):
         pass
-
+        
     def save_quantized(self, save_dir, safetensors=True, shard_size="10GB"):
         save_dir = save_dir[:-1] if save_dir[-1] == "/" else save_dir
 
@@ -151,7 +151,7 @@ class BaseAWQForCausalLM(nn.Module):
 
             def forward(self, x):
                 return x
-
+                
         # Save model and config files with empty state dict
         self.model.config.quantization_config = self.quant_config.to_transformers_dict()
         self.model.save_pretrained(save_dir, state_dict=EmptyModule().state_dict())
@@ -279,7 +279,7 @@ class BaseAWQForCausalLM(nn.Module):
                 torch_dtype=torch_dtype,
                 trust_remote_code=trust_remote_code,
             )
-
+        
         # Prepare WQLinear layers, replace nn.Linear
         self._load_quantized_modules(
             self,
@@ -291,10 +291,10 @@ class BaseAWQForCausalLM(nn.Module):
         )
 
         model.tie_weights()
-
-        if quant_config.version == "QUICK":
-            for i in range(len(model.model.layers)): 
-                del model.model.layers[i].self_attn.rope
+        
+        # if quant_config.version == "QUICK":
+        #     for i in range(len(model.model.layers)): 
+        #         del model.model.layers[i].self_attn.rope
         
         # loads the weights into modules and distributes
         # across available devices automatically
@@ -400,17 +400,6 @@ class BaseAWQForCausalLM(nn.Module):
 
             # Replace activation functions
             self._scale_activations(self, layer)
-
-            if version == "QUICK":
-                weights = torch.cat([layer.self_attn.q_proj.weight, layer.self_attn.k_proj.weight, layer.self_attn.v_proj.weight], dim=0)
-                bias = torch.cat([layer.self_attn.q_proj.bias, layer.self_attn.k_proj.bias, layer.self_attn.v_proj.bias], dim=0) if layer.self_attn.q_proj.bias is not None else None
-                qkv_layer = nn.Linear(layer.self_attn.q_proj.in_features, layer.self_attn.q_proj.out_features+layer.self_attn.k_proj.out_features+layer.self_attn.v_proj.out_features, layer.self_attn.q_proj.bias is not None, layer.self_attn.q_proj.weight.device)
-
-                qkv_layer.weight.data = weights
-                qkv_layer.bias = bias
-                attn = QuantAttentionFused(hidden_size=model.config.hidden_size, n_heads=model.config.num_attention_heads, qkv_layer=qkv_layer, o_proj=layer.self_attn.o_proj, n_kv_heads=model.config.num_key_value_heads,
-                                    dev=layer.self_attn.q_proj.weight.device, max_seq_len=model.config.max_new_tokens, rope_theta=model.config.rope_theta) #AttributeError: 'LlamaConfig' object has no attribute 'max_new_tokens'
-                set_op_by_name(layer, 'self_attn', attn)
             
             # Get every linear layer in a block
             named_linears = get_named_linears(layer)

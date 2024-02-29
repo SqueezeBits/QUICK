@@ -129,10 +129,6 @@ class AwqQuantizer:
 
             # [STEP 4]: Quantize weights
             if not self.export_compatible:
-                if self.version == 'QUICK':
-                    self._apply_quant_attn(self.modules[i])
-                    named_linears = get_named_linears(self.modules[i])
-                    named_linears = exclude_layers_to_not_quantize(named_linears, self.modules_to_not_convert)
                 self._apply_quant(self.modules[i], named_linears)
             clear_memory()
 
@@ -148,20 +144,6 @@ class AwqQuantizer:
             named_linears = exclude_layers_to_not_quantize(named_linears, self.modules_to_not_convert)
             self._apply_quant(self.modules[i], named_linears)
             clear_memory()
-
-    def _apply_quant_attn(self, module):
-        
-        weights = torch.cat([module.self_attn.q_proj.weight, module.self_attn.k_proj.weight, module.self_attn.v_proj.weight], dim=0)
-        bias = torch.cat([module.self_attn.q_proj.bias, module.self_attn.k_proj.bias, module.self_attn.v_proj.bias], dim=0) if module.self_attn.q_proj.bias is not None else None
-        qkv_layer = nn.Linear(module.self_attn.q_proj.in_features, module.self_attn.q_proj.out_features+module.self_attn.k_proj.out_features+module.self_attn.v_proj.out_features, module.self_attn.q_proj.bias is not None, module.self_attn.q_proj.weight.device)
-        
-        qkv_layer.weight.data = weights
-        qkv_layer.bias = bias
-        
-        attn = QuantAttentionFused(hidden_size=self.model.config.hidden_size, n_heads=self.model.config.num_attention_heads, qkv_layer=qkv_layer, o_proj=module.self_attn.o_proj, n_kv_heads=self.model.config.num_key_value_heads,
-                                    dev=module.self_attn.q_proj.weight.device, max_seq_len=4096, rope_theta=self.model.config.rope_theta) # 'max_seq_len' is to be fixed
-
-        set_op_by_name(module, 'self_attn', attn)
 
     def _apply_quant(self, module, named_linears: Dict[str, nn.Linear]):
         for name, linear_layer in named_linears.items():

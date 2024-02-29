@@ -1,12 +1,8 @@
 # QUICK: Quantization-aware Interleaving and Conflict-free Kernel for efficient LLM inference
 
 <p align="middle">
-    <a href="https://github.com/Squeezebits/QUICK/releases">
-        <img alt="GitHub - Releases" src="https://img.shields.io/github/release/Squeezebits/QUICK.svg">
-    </a>
-    <a href="https://arxiv.org/abs/2402.10076">
-        <img src="https://img.shields.io/badge/arXiv-2402.10076-b31b1b.svg" alt="arXiv">
-    </a>
+    <a href="https://github.com/Squeezebits/QUICK/releases"><img alt="GitHub - Releases" src="https://img.shields.io/github/release/Squeezebits/QUICK.svg"/></a>
+    <a href="https://arxiv.org/abs/2402.10076"><img src="https://img.shields.io/badge/arXiv-2402.10076-b31b1b.svg" alt="arXiv"/></a>
 </p>
 
 Introducing [QUICK](https://arxiv.org/abs/2402.10076), a collection of novel optimized CUDA kernels designed for faster inference of quantized Large Language Models (LLMs). QUICK addresses the shared memory write-back bank conflict issue in state-of-the-art mixed precision General Matrix Multiplication (GEMM) kernels.
@@ -56,7 +52,7 @@ python examples/basic_quant.py --model_path </path/to/hf-model> --quant_path </p
 ```
 
 
-2. Evaluation: Evalutate the quantized model on several tasks (we tested on 'wikitext' dataset)
+2. Evaluation: Evaluate the quantized model on several tasks (we tested on 'wikitext' dataset)
 ```
 python examples/eval.py --model_path </path/to/quant-model> --tasks <tasks_to_evaluate>
 ```
