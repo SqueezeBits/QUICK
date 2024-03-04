@@ -1523,81 +1523,81 @@ torch::Tensor gemm_forward_cuda_quick(
     torch::Tensor _zeros,
     int split_k_iters)
 {
-    int num_in_feats = _in_feats.size(0);
-    int num_in_channels = _in_feats.size(1);
-    const at::cuda::OptionalCUDAGuard device_guard(device_of(_in_feats));
+  int num_in_feats = _in_feats.size(0);
+  int num_in_channels = _in_feats.size(1);
+  const at::cuda::OptionalCUDAGuard device_guard(device_of(_in_feats));
 
-    auto options = torch::TensorOptions().dtype(_in_feats.dtype()).device(_in_feats.device());
-    at::Tensor _workspace = torch::empty({split_k_iters, num_in_feats, _kernel.size(1) / 4 * 8}, options);
-    at::Tensor _out_feats = torch::empty({num_in_feats, _kernel.size(1) / 4 * 8}, options);
-    int num_out_feats = _out_feats.size(-2);
-    int num_out_channels = _out_feats.size(-1);
+  auto options = torch::TensorOptions().dtype(_in_feats.dtype()).device(_in_feats.device());
+  at::Tensor _workspace = torch::empty({split_k_iters, num_in_feats, _kernel.size(1) / 4 * 8}, options);
+  at::Tensor _out_feats = torch::empty({num_in_feats, _kernel.size(1) / 4 * 8}, options);
+  int num_out_feats = _out_feats.size(-2);
+  int num_out_channels = _out_feats.size(-1);
 
-    auto in_feats = reinterpret_cast<half*>(_in_feats.data_ptr<at::Half>());
-    auto kernel = reinterpret_cast<int*>(_kernel.data_ptr<int>());
-    auto workspace = reinterpret_cast<half*>(_workspace.data_ptr<at::Half>());
-    auto out_feats = reinterpret_cast<half*>(_out_feats.data_ptr<at::Half>());
-    auto scaling_factors = reinterpret_cast<half*>(_scaling_factors.data_ptr<at::Half>());
-    auto zeros = reinterpret_cast<int*>(_zeros.data_ptr<int>());
-    int group_size = num_in_channels / _scaling_factors.size(0);
+  auto in_feats = reinterpret_cast<half*>(_in_feats.data_ptr<at::Half>());
+  auto kernel = reinterpret_cast<int*>(_kernel.data_ptr<int>());
+  auto workspace = reinterpret_cast<half*>(_workspace.data_ptr<at::Half>());
+  auto out_feats = reinterpret_cast<half*>(_out_feats.data_ptr<at::Half>());
+  auto scaling_factors = reinterpret_cast<half*>(_scaling_factors.data_ptr<at::Half>());
+  auto zeros = reinterpret_cast<int*>(_zeros.data_ptr<int>());
+  int group_size = num_in_channels / _scaling_factors.size(0);
 
-    if (num_out_channels % 128 != 0)
-        throw std::invalid_argument("OC is not multiple of cta_N = 128");
-    if (num_out_channels % 8 != 0)
-        throw std::invalid_argument("OC is not multiple of pack_num = 8");
-    if (group_size % 32 != 0)
-	      throw std::invalid_argument("Group size should be a multiple of 32");
-    int oc_block_num = num_out_channels / 128 / 1;
+  if (num_out_channels % 128 != 0)
+      throw std::invalid_argument("OC is not multiple of cta_N = 128");
+  if (num_out_channels % 8 != 0)
+      throw std::invalid_argument("OC is not multiple of pack_num = 8");
+  if (group_size % 32 != 0)
+      throw std::invalid_argument("Group size should be a multiple of 32");
+  int oc_block_num = num_out_channels / 128 / 1;
 
-    dim3 threads_per_block(32, 2);
-    if (num_in_feats > 32) {
-      if (num_in_feats % 64 == 0) {
-        dim3 num_blocks_64(num_out_feats / 64 * oc_block_num, split_k_iters);
-        gemm_forward_4bit_cuda_quick_m64n128k32<<<num_blocks_64, threads_per_block>>>(
-            group_size, split_k_iters, in_feats, kernel, scaling_factors, zeros, num_in_feats, num_in_channels, num_out_channels, workspace);
-        return _workspace.sum(0);
-      }
-      else {
-        dim3 num_blocks_64((num_out_feats + 64 - 1) / 64 * oc_block_num, split_k_iters);
-        gemm_forward_4bit_cuda_quick_m64n128k32_sub<<<num_blocks_64, threads_per_block>>>(
-            group_size, split_k_iters, in_feats, kernel, scaling_factors, zeros, num_in_feats, num_in_channels, num_out_channels, workspace);
-        return _workspace.sum(0);
-      }
-    }
-    else if (num_in_feats > 16) {
-      dim3 num_blocks_32(oc_block_num, split_k_iters);
-      static constexpr int NUM_THREADS_REDUCE_X = 4;
-      static constexpr int NUM_THREADS_REDUCE_Y = 16;
-      dim3 threads_per_block_reduce(NUM_THREADS_REDUCE_X, NUM_THREADS_REDUCE_Y);
-      dim3 num_blocks_reduce((num_out_feats + NUM_THREADS_REDUCE_X - 1) / NUM_THREADS_REDUCE_X, (num_out_channels / 8 + NUM_THREADS_REDUCE_Y - 1) / NUM_THREADS_REDUCE_Y);
-
-      gemm_forward_4bit_cuda_quick_m32n128k32<<<num_blocks_32, threads_per_block>>>(
+  dim3 threads_per_block(32, 2);
+  if (num_in_feats > 32) {
+    if (num_in_feats % 64 == 0) {
+      dim3 num_blocks_64(num_out_feats / 64 * oc_block_num, split_k_iters);
+      gemm_forward_4bit_cuda_quick_m64n128k32<<<num_blocks_64, threads_per_block>>>(
           group_size, split_k_iters, in_feats, kernel, scaling_factors, zeros, num_in_feats, num_in_channels, num_out_channels, workspace);
-      reduce_psum<<<num_blocks_reduce, threads_per_block_reduce>>>(workspace, out_feats, num_in_feats, num_out_channels, split_k_iters);
-      return _out_feats;
-    }
-    else if (num_in_feats == 1) {
-      dim3 num_blocks_1(oc_block_num, split_k_iters);
-      static constexpr int NUM_THREADS_REDUCE_X = 1;
-      static constexpr int NUM_THREADS_REDUCE_Y = 16;
-      dim3 threads_per_block_reduce(NUM_THREADS_REDUCE_X, NUM_THREADS_REDUCE_Y);
-      dim3 num_blocks_reduce((num_out_feats + NUM_THREADS_REDUCE_X - 1) / NUM_THREADS_REDUCE_X, (num_out_channels / 8 + NUM_THREADS_REDUCE_Y - 1) / NUM_THREADS_REDUCE_Y);
-
-      gemm_forward_4bit_cuda_quick_m1n128k32<<<num_blocks_1, threads_per_block>>>(
-          group_size, split_k_iters, in_feats, kernel, scaling_factors, zeros, num_in_feats, num_in_channels, num_out_channels, workspace);
-      reduce_psum<<<num_blocks_reduce, threads_per_block_reduce>>>(workspace, out_feats, num_in_feats, num_out_channels, split_k_iters);
-      return _out_feats;
+      return _workspace.sum(0);
     }
     else {
-      dim3 num_blocks(oc_block_num, split_k_iters);
-      static constexpr int NUM_THREADS_REDUCE_X = 2;
-      static constexpr int NUM_THREADS_REDUCE_Y = 16;
-      dim3 threads_per_block_reduce(NUM_THREADS_REDUCE_X, NUM_THREADS_REDUCE_Y);
-      dim3 num_blocks_reduce((num_out_feats + NUM_THREADS_REDUCE_X - 1) / NUM_THREADS_REDUCE_X, (num_out_channels / 8 + NUM_THREADS_REDUCE_Y - 1) / NUM_THREADS_REDUCE_Y);
-
-      gemm_forward_4bit_cuda_quick_m16n128k32<<<num_blocks, threads_per_block>>>(
+      dim3 num_blocks_64((num_out_feats + 64 - 1) / 64 * oc_block_num, split_k_iters);
+      gemm_forward_4bit_cuda_quick_m64n128k32_sub<<<num_blocks_64, threads_per_block>>>(
           group_size, split_k_iters, in_feats, kernel, scaling_factors, zeros, num_in_feats, num_in_channels, num_out_channels, workspace);
-      reduce_psum<<<num_blocks_reduce, threads_per_block_reduce>>>(workspace, out_feats, num_in_feats, num_out_channels, split_k_iters);
-      return _out_feats;
+      return _workspace.sum(0);
+    }
+  }
+  else if (num_in_feats > 16) {
+    dim3 num_blocks_32(oc_block_num, split_k_iters);
+    static constexpr int NUM_THREADS_REDUCE_X = 4;
+    static constexpr int NUM_THREADS_REDUCE_Y = 16;
+    dim3 threads_per_block_reduce(NUM_THREADS_REDUCE_X, NUM_THREADS_REDUCE_Y);
+    dim3 num_blocks_reduce((num_out_feats + NUM_THREADS_REDUCE_X - 1) / NUM_THREADS_REDUCE_X, (num_out_channels / 8 + NUM_THREADS_REDUCE_Y - 1) / NUM_THREADS_REDUCE_Y);
+
+    gemm_forward_4bit_cuda_quick_m32n128k32<<<num_blocks_32, threads_per_block>>>(
+        group_size, split_k_iters, in_feats, kernel, scaling_factors, zeros, num_in_feats, num_in_channels, num_out_channels, workspace);
+    reduce_psum<<<num_blocks_reduce, threads_per_block_reduce>>>(workspace, out_feats, num_in_feats, num_out_channels, split_k_iters);
+    return _out_feats;
+  }
+  else if (num_in_feats == 1) {
+    dim3 num_blocks_1(oc_block_num, split_k_iters);
+    static constexpr int NUM_THREADS_REDUCE_X = 1;
+    static constexpr int NUM_THREADS_REDUCE_Y = 16;
+    dim3 threads_per_block_reduce(NUM_THREADS_REDUCE_X, NUM_THREADS_REDUCE_Y);
+    dim3 num_blocks_reduce((num_out_feats + NUM_THREADS_REDUCE_X - 1) / NUM_THREADS_REDUCE_X, (num_out_channels / 8 + NUM_THREADS_REDUCE_Y - 1) / NUM_THREADS_REDUCE_Y);
+
+    gemm_forward_4bit_cuda_quick_m1n128k32<<<num_blocks_1, threads_per_block>>>(
+        group_size, split_k_iters, in_feats, kernel, scaling_factors, zeros, num_in_feats, num_in_channels, num_out_channels, workspace);
+    reduce_psum<<<num_blocks_reduce, threads_per_block_reduce>>>(workspace, out_feats, num_in_feats, num_out_channels, split_k_iters);
+    return _out_feats;
+  }
+  else {
+    dim3 num_blocks(oc_block_num, split_k_iters);
+    static constexpr int NUM_THREADS_REDUCE_X = 2;
+    static constexpr int NUM_THREADS_REDUCE_Y = 16;
+    dim3 threads_per_block_reduce(NUM_THREADS_REDUCE_X, NUM_THREADS_REDUCE_Y);
+    dim3 num_blocks_reduce((num_out_feats + NUM_THREADS_REDUCE_X - 1) / NUM_THREADS_REDUCE_X, (num_out_channels / 8 + NUM_THREADS_REDUCE_Y - 1) / NUM_THREADS_REDUCE_Y);
+
+    gemm_forward_4bit_cuda_quick_m16n128k32<<<num_blocks, threads_per_block>>>(
+        group_size, split_k_iters, in_feats, kernel, scaling_factors, zeros, num_in_feats, num_in_channels, num_out_channels, workspace);
+    reduce_psum<<<num_blocks_reduce, threads_per_block_reduce>>>(workspace, out_feats, num_in_feats, num_out_channels, split_k_iters);
+    return _out_feats;
     }
 }

@@ -118,26 +118,24 @@ class WQLinear_QUICK(nn.Module):
 
         # Pack scales
         scales = scales.t()
-        qscales = torch.zeros((scales.shape[0], scales.shape[1] * 2), dtype=torch.float16, device=zeros.device)
+        qscales = torch.zeros((scales.shape[0], scales.shape[1]), dtype=torch.float16, device=zeros.device)
         for x in range(intweight.shape[1]):
             ndx = ((x // (intweight.shape[1] // 2)) % 2) * 64 + \
                 ((x // (intweight.shape[1] // 4)) % 2) * 4 + \
                 ((x // 32) % (intweight.shape[1] // 128)) * 128 + \
                 (x % 8) * 8 + (x % 32) // 8
-            qscales[:,x*2] = scales[:,ndx]
-            qscales[:,x*2+1] = scales[:,ndx]
+            qscales[:, x] = scales[:,ndx]
 
         # Pack zeros
         zeros = zeros.t()
         zeros = zeros.to(dtype=torch.int32)
-        zeros_ext = torch.zeros((zeros.shape[0], zeros.shape[1] * 2), dtype=torch.int32, device=zeros.device)
+        zeros_ext = torch.zeros((zeros.shape[0], zeros.shape[1]), dtype=torch.int32, device=zeros.device)
         for x in range(intweight.shape[1]):
             ndx = ((x // (intweight.shape[1] // 2)) % 2) * 64 + \
                 ((x // (intweight.shape[1] // 4)) % 2) * 4 + \
                 ((x // 32) % (intweight.shape[1] // 128)) * 128 + \
                 (x % 8) * 8 + (x % 32) // 8
-            zeros_ext[:,(x//4)*8+(x%4)] = zeros[:, ndx]
-            zeros_ext[:,(x//4)*8+(x%4)+4] = zeros[:, ndx]
+            zeros_ext[:, x] = zeros[:, ndx]
 
         # Pack integer zeros
         qzeros = torch.zeros((zeros.shape[0], zeros.shape[1] * 2 // (32 // awq_linear.w_bit)), dtype=torch.int32, device=zeros.device)
