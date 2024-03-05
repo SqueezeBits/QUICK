@@ -39,7 +39,7 @@ pip install git+https://github.com/SqueezeBits/QUICK
 - Or clone the repository and install from source:
 ```
 git clone https://github.com/SqueezeBits/QUICK
-cd quick
+cd QUICK
 pip install -e .
 ```
 
