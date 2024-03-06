@@ -18,16 +18,13 @@ Inspired by :
 
 
 __device__ void compute_gemm(half const* A_shared, int const* B_ptr_local, float* C_warp,
-                              half* B_loaded_zeros, half* B_loaded_scales)
+                              uint4 B_loaded_zero, uint4 B_loaded_zero_2,
+                              uint4 B_loaded_scale, uint4 B_loaded_scale_2)
 {
   half A_warp[8];
 
   // Load B
   uint4 B_loaded = *(uint4*)(B_ptr_local);
-  uint4 B_loaded_zero = *(uint4*)(B_loaded_zeros);
-  uint4 B_loaded_scale = *(uint4*)(B_loaded_scales);
-  uint4 B_loaded_zero_2 = *(uint4*)(B_loaded_zeros+8);
-  uint4 B_loaded_scale_2 = *(uint4*)(B_loaded_scales+8);
 
   // Copy A
   {
@@ -457,16 +454,13 @@ __device__ void compute_gemm(half const* A_shared, int const* B_ptr_local, float
 
 
 __device__ void compute_gemm_x2(half const* A_shared, int const* B_ptr_local, float* C_warp,
-                                half* B_loaded_zeros, half* B_loaded_scales)
+                                  uint4 B_loaded_zero, uint4 B_loaded_zero_2,
+                                  uint4 B_loaded_scale, uint4 B_loaded_scale_2)
 {
   half A_warp[16];
 
   // Load B
   uint4 B_loaded = *(uint4*)(B_ptr_local);
-  uint4 B_loaded_zero = *(uint4*)(B_loaded_zeros);
-  uint4 B_loaded_scale = *(uint4*)(B_loaded_scales);
-  uint4 B_loaded_zero_2 = *(uint4*)(B_loaded_zeros+8);
-  uint4 B_loaded_scale_2 = *(uint4*)(B_loaded_scales+8);
 
   // Copy A
   {
@@ -1199,12 +1193,6 @@ __device__ void compute_gemm_x2(half const* A_shared, int const* B_ptr_local, fl
 }
 
 
-__device__ void extend_scale_bias_h8_h16(half* tensor) {
-  #pragma unroll
-  for (int i = 15; i > 0; --i) tensor[i] = tensor[i/2];
-}
-
-
 __global__ void gemm_forward_4bit_cuda_quick_m1n128k32(int G, int split_k_iters, half* __restrict__ A, int* __restrict__ B, half* __restrict__ scaling_factors, int* __restrict__ zeros, int M, int IC, int OC, half* __restrict__ C)
 { // Implement GEMV for B <= 8
   float C_warp[32];
@@ -1216,28 +1204,25 @@ __global__ void gemm_forward_4bit_cuda_quick_m1n128k32(int G, int split_k_iters,
   int* B_ptr = B + (threadIdx.y * (OC / 8) * 2 + (threadIdx.x / (128 / 8)) * (OC / 8) + blockIdx.x * (128 / 8) + (threadIdx.x % (128 / 8))) * 8;
   half* A_shared_ptr = A_shared + threadIdx.y * 32 + (threadIdx.x % 4) * 8;
   int channel = threadIdx.y * (OC / 8) * 2 + (threadIdx.x / (128 / 8)) * (OC / 8) + blockIdx.x * (128 / 8) + (threadIdx.x % (128 / 8));
-  int* zeros_ptr = zeros + (channel / 4);
-  half* scaling_factors_ptr = scaling_factors + (channel / 4) * 8;
+  int* zeros_ptr = zeros + (channel / 4) * 2;
+  half* scaling_factors_ptr = scaling_factors + (channel / 4) * 16;
   half* C_ptr = C + blockIdx.y * M * OC + blockIdx.x * 128 + threadIdx.y * 64 + (threadIdx.x % 4) * 2;
 
   int k_bound = (IC / 32 + split_k_iters - 1) / split_k_iters;
   if ((k_bound - 1) * 32 + blockIdx.y >= IC) k_bound -= 1;
 
-  half B_loaded_zero[16];
-  half B_loaded_scale[16];
   #pragma unroll
   for (int _k_0_0 = 0; _k_0_0 < k_bound; ++_k_0_0) {
     int k_0_0 = _k_0_0 * split_k_iters + blockIdx.y;
     *(uint4*)(A_shared_ptr) = *(uint4*)(A_ptr + (k_0_0 * 32));
     __syncthreads();
     int* B_ptr_local = B_ptr + k_0_0 * 32 * (OC / 8);
-
-    uint B_loaded_z = *(uint*)(zeros_ptr + ((k_0_0 * 32) / G) * (OC / 8));
-    *(uint4*)B_loaded_scale = *(uint4*)(scaling_factors_ptr + ((k_0_0 * 32) / G) * OC);
-    *(uint4*)B_loaded_zero = dequantize_s4_to_fp16x2_fused(B_loaded_z);
-    extend_scale_bias_h8_h16(B_loaded_scale);
-    extend_scale_bias_h8_h16(B_loaded_zero);
-    compute_gemm(A_shared, B_ptr_local, C_warp, B_loaded_zero, B_loaded_scale);
+    uint2 B_loaded_z = *(uint2*)(zeros_ptr + ((k_0_0 * 32) / G) * (OC / 8) * 2);
+    uint4 B_loaded_scale = *(uint4*)(scaling_factors_ptr + ((k_0_0 * 32) / G) * OC * 2);
+    uint4 B_loaded_scale_2 = *(uint4*)(scaling_factors_ptr + ((k_0_0 * 32) / G) * OC * 2 + 8);
+    uint4 B_loaded_zero = dequantize_s4_to_fp16x2_fused(B_loaded_z.x);
+    uint4 B_loaded_zero_2 = dequantize_s4_to_fp16x2_fused(B_loaded_z.y);
+    compute_gemm(A_shared, B_ptr_local, C_warp, B_loaded_zero, B_loaded_zero_2, B_loaded_scale, B_loaded_scale_2);
     __syncthreads();
   }
 
@@ -1266,27 +1251,25 @@ __global__ void gemm_forward_4bit_cuda_quick_m16n128k32(int G, int split_k_iters
   int* B_ptr = B + (threadIdx.y * (OC / 8) * 2 + (threadIdx.x / (128 / 8)) * (OC / 8) + blockIdx.x * (128 / 8) + (threadIdx.x % (128 / 8))) * 8;
   half* A_shared_ptr = A_shared + threadIdx.y * 8 * 32 + threadIdx.x * 8;
   int channel = threadIdx.y * (OC / 8) * 2 + threadIdx.x / (128 / 8) * (OC / 8) + blockIdx.x * (128 / 8) + threadIdx.x % (128 / 8);
-  int* zeros_ptr = zeros + (channel / 4);
-  half* scaling_factors_ptr = scaling_factors + (channel / 4) * 8;
+  int* zeros_ptr = zeros + (channel / 4) * 2;
+  half* scaling_factors_ptr = scaling_factors + (channel / 4) * 16;
   half* C_ptr = C + blockIdx.y * M * OC + blockIdx.x * 128 + threadIdx.y * 64 + (threadIdx.x % 4) * 2;
 
   int k_bound = (IC / 32 + split_k_iters - 1) / split_k_iters;
   if ((k_bound - 1) * 32 + blockIdx.y >= IC) k_bound -= 1;
 
-  half B_loaded_zero[16];
-  half B_loaded_scale[16];
   #pragma unroll
   for (int _k_0_0 = 0; _k_0_0 < k_bound; ++_k_0_0) {
     int k_0_0 = _k_0_0 * split_k_iters + blockIdx.y;
     if (ld_A_flag) *(uint4*)(A_shared_ptr) = *(uint4*)(A_ptr + (k_0_0 * 32));
     __syncthreads();
     int* B_ptr_local = B_ptr + k_0_0 * 32 * (OC / 8);
-    uint B_loaded_z = *(uint*)(zeros_ptr + k_0_0 * 32 / G * (OC / 8));
-    *(uint4*)B_loaded_scale = *(uint4*)(scaling_factors_ptr + k_0_0 * 32 / G * OC);
-    *(uint4*)B_loaded_zero = dequantize_s4_to_fp16x2_fused(B_loaded_z);
-    extend_scale_bias_h8_h16(B_loaded_scale);
-    extend_scale_bias_h8_h16(B_loaded_zero);
-    compute_gemm(A_shared, B_ptr_local, C_warp, B_loaded_zero, B_loaded_scale);
+    uint2 B_loaded_z = *(uint2*)(zeros_ptr + ((k_0_0 * 32) / G) * (OC / 8) * 2);
+    uint4 B_loaded_scale = *(uint4*)(scaling_factors_ptr + ((k_0_0 * 32) / G) * OC * 2);
+    uint4 B_loaded_scale_2 = *(uint4*)(scaling_factors_ptr + ((k_0_0 * 32) / G) * OC * 2 + 8);
+    uint4 B_loaded_zero = dequantize_s4_to_fp16x2_fused(B_loaded_z.x);
+    uint4 B_loaded_zero_2 = dequantize_s4_to_fp16x2_fused(B_loaded_z.y);
+    compute_gemm(A_shared, B_ptr_local, C_warp, B_loaded_zero, B_loaded_zero_2, B_loaded_scale, B_loaded_scale_2);
     __syncthreads();
   }
 
@@ -1317,15 +1300,13 @@ __global__ void gemm_forward_4bit_cuda_quick_m32n128k32(int G, int split_k_iters
   int* B_ptr = B + (threadIdx.y * (OC / 8) * 2 + (threadIdx.x / (128 / 8)) * (OC / 8) + (blockIdx.x % oc_block_num) * (128 / 8) + (threadIdx.x % (128 / 8))) * 8;
   half* A_shared_ptr = A_shared + threadIdx.y * row_stride_warp * 32 + (threadIdx.x / (32 / 8)) * 32 + (threadIdx.x % (32 / 8)) * 8;
   int channel = threadIdx.y * (OC / 8) * 2 + (threadIdx.x / (128 / 8)) * (OC / 8) + (blockIdx.x % oc_block_num) * (128 / 8) + (threadIdx.x % (128 / 8));
-  int* zeros_ptr = zeros + (channel / 4);
-  half* scaling_factors_ptr = scaling_factors + (channel / 4) * 8;
+  int* zeros_ptr = zeros + (channel / 4) * 2;
+  half* scaling_factors_ptr = scaling_factors + (channel / 4) * 16;
   half* C_ptr = C + blockIdx.y * M * OC + (blockIdx.x % oc_block_num) * 128 + threadIdx.y * 64 + (threadIdx.x % 4) * 2;
 
   int k_bound = (IC / 32 + split_k_iters - 1) / split_k_iters;
   if ((k_bound - 1) * 32 + blockIdx.y >= IC) k_bound -= 1;
 
-  half B_loaded_zero[16];
-  half B_loaded_scale[16];
   #pragma unroll
   for (int _k_0_0 = 0; _k_0_0 < k_bound; ++_k_0_0) {
     int k_0_0 = _k_0_0 * split_k_iters + blockIdx.y;
@@ -1333,12 +1314,12 @@ __global__ void gemm_forward_4bit_cuda_quick_m32n128k32(int G, int split_k_iters
     if(ld_A_flag_2) *(uint4*)(A_shared_ptr + 16 * 32) = *(uint4*)(A_ptr + 16 * IC + (k_0_0 * 32));
     __syncthreads();
     int* B_ptr_local = B_ptr + k_0_0 * 32 * (OC / 8);
-    uint B_loaded_z = *(uint*)(zeros_ptr + ((k_0_0 * 32) / G) * (OC / 8));
-    *(uint4*)B_loaded_scale = *(uint4*)(scaling_factors_ptr + ((k_0_0 * 32) / G) * OC);
-    *(uint4*)B_loaded_zero = dequantize_s4_to_fp16x2_fused(B_loaded_z);
-    extend_scale_bias_h8_h16(B_loaded_scale);
-    extend_scale_bias_h8_h16(B_loaded_zero);
-    compute_gemm_x2(A_shared, B_ptr_local, C_warp, B_loaded_zero, B_loaded_scale);
+    uint2 B_loaded_z = *(uint2*)(zeros_ptr + ((k_0_0 * 32) / G) * (OC / 8) * 2);
+    uint4 B_loaded_scale = *(uint4*)(scaling_factors_ptr + ((k_0_0 * 32) / G) * OC * 2);
+    uint4 B_loaded_scale_2 = *(uint4*)(scaling_factors_ptr + ((k_0_0 * 32) / G) * OC * 2 + 8);
+    uint4 B_loaded_zero = dequantize_s4_to_fp16x2_fused(B_loaded_z.x);
+    uint4 B_loaded_zero_2 = dequantize_s4_to_fp16x2_fused(B_loaded_z.y);
+    compute_gemm_x2(A_shared, B_ptr_local, C_warp, B_loaded_zero, B_loaded_zero_2, B_loaded_scale, B_loaded_scale_2);
     __syncthreads();
   }
 
@@ -1370,15 +1351,13 @@ __global__ void gemm_forward_4bit_cuda_quick_m64n128k32(int G, int split_k_iters
   int* B_ptr = B + (threadIdx.y * (OC / 8) * 2 + (threadIdx.x / (128 / 8)) * (OC / 8) + (blockIdx.x % oc_block_num) * (128 / 8) + (threadIdx.x % (128 / 8))) * 8;
   half* A_shared_ptr = A_shared + threadIdx.y * row_stride_warp * 32 + (threadIdx.x / (32 / 8)) * 32 + (threadIdx.x % (32 / 8)) * 8;
   int channel = threadIdx.y * (OC / 8) * 2 + threadIdx.x / (128 / 8) * (OC / 8) + (blockIdx.x % oc_block_num) * (128 / 8) + (threadIdx.x % (128 / 8));
-  int* zeros_ptr = zeros + (channel / 4);
-  half* scaling_factors_ptr = scaling_factors + (channel / 4) * 8;
+  int* zeros_ptr = zeros + (channel / 4) * 2;
+  half* scaling_factors_ptr = scaling_factors + (channel / 4) * 16;
   half* C_ptr = C + blockIdx.y * M * OC + (blockIdx.x % oc_block_num) * 128 + threadIdx.y * 64 + (threadIdx.x % 4) * 2;
 
   int k_bound = (IC / 32 + split_k_iters - 1) / split_k_iters;
   if ((k_bound - 1) * 32 + blockIdx.y >= IC) k_bound -= 1;
 
-  half B_loaded_zero[16];
-  half B_loaded_scale[16];
   #pragma unroll
   for (int _k_0_0 = 0; _k_0_0 < k_bound; ++_k_0_0) {
     int k_0_0 = _k_0_0 * split_k_iters + blockIdx.y;
@@ -1388,13 +1367,13 @@ __global__ void gemm_forward_4bit_cuda_quick_m64n128k32(int G, int split_k_iters
     *(uint4*)(A_shared_ptr + 48 * 32) = *(uint4*)(A_ptr + 48 * IC + (k_0_0 * 32));
     __syncthreads();
     int* B_ptr_local = B_ptr + k_0_0 * 32 * (OC / 8);
-    uint B_loaded_z = *(uint*)(zeros_ptr + ((k_0_0 * 32) / G) * (OC / 8));
-    *(uint4*)B_loaded_scale = *(uint4*)(scaling_factors_ptr + ((k_0_0 * 32) / G) * OC);
-    *(uint4*)B_loaded_zero = dequantize_s4_to_fp16x2_fused(B_loaded_z);
-    extend_scale_bias_h8_h16(B_loaded_scale);
-    extend_scale_bias_h8_h16(B_loaded_zero);
-    compute_gemm_x2(A_shared, B_ptr_local, C_warp, B_loaded_zero, B_loaded_scale);
-    compute_gemm_x2(A_shared + 32 * 32, B_ptr_local, C_warp + 64, B_loaded_zero, B_loaded_scale);
+    uint2 B_loaded_z = *(uint2*)(zeros_ptr + ((k_0_0 * 32) / G) * (OC / 8) * 2);
+    uint4 B_loaded_scale = *(uint4*)(scaling_factors_ptr + ((k_0_0 * 32) / G) * OC * 2);
+    uint4 B_loaded_scale_2 = *(uint4*)(scaling_factors_ptr + ((k_0_0 * 32) / G) * OC * 2 + 8);
+    uint4 B_loaded_zero = dequantize_s4_to_fp16x2_fused(B_loaded_z.x);
+    uint4 B_loaded_zero_2 = dequantize_s4_to_fp16x2_fused(B_loaded_z.y);
+    compute_gemm_x2(A_shared, B_ptr_local, C_warp, B_loaded_zero, B_loaded_zero_2, B_loaded_scale, B_loaded_scale_2);
+    compute_gemm_x2(A_shared + 32 * 32, B_ptr_local, C_warp + 64, B_loaded_zero, B_loaded_zero_2, B_loaded_scale, B_loaded_scale_2);
     __syncthreads();
   }
 
@@ -1409,10 +1388,10 @@ __global__ void gemm_forward_4bit_cuda_quick_m64n128k32(int G, int split_k_iters
     float* C_warp_local = C_warp + local_id * 2;
     #pragma unroll
     for (int chunk_id = 0; chunk_id < 4; ++chunk_id) {
-      __stcg((__half2*)(C_ptr_local + chunk_id * 16 + row_offset_1 * OC), __float22half2_rn(*(float2*)(C_warp_local + chunk_id * 8)));
-      __stcg((__half2*)(C_ptr_local + chunk_id * 16 + row_offset_2 * OC), __float22half2_rn(*(float2*)(C_warp_local + chunk_id * 8 + 32)));
-      __stcg((__half2*)(C_ptr_local + chunk_id * 16 + row_offset_3 * OC), __float22half2_rn(*(float2*)(C_warp_local + chunk_id * 8 + 64)));
-      __stcg((__half2*)(C_ptr_local + chunk_id * 16 + row_offset_4 * OC), __float22half2_rn(*(float2*)(C_warp_local + chunk_id * 8 + 96)));
+      *(__half2*)(C_ptr_local + chunk_id * 16 + row_offset_1 * OC) = __float22half2_rn(*(float2*)(C_warp_local + chunk_id * 8));
+      *(__half2*)(C_ptr_local + chunk_id * 16 + row_offset_2 * OC) = __float22half2_rn(*(float2*)(C_warp_local + chunk_id * 8 + 32));
+      *(__half2*)(C_ptr_local + chunk_id * 16 + row_offset_3 * OC) = __float22half2_rn(*(float2*)(C_warp_local + chunk_id * 8 + 64));
+      *(__half2*)(C_ptr_local + chunk_id * 16 + row_offset_4 * OC) = __float22half2_rn(*(float2*)(C_warp_local + chunk_id * 8 + 96));
     }
   }
 }
@@ -1434,15 +1413,13 @@ __global__ void gemm_forward_4bit_cuda_quick_m64n128k32_sub(int G, int split_k_i
   int* B_ptr = B + (threadIdx.y * (OC / 8) * 2 + (threadIdx.x / (128 / 8)) * (OC / 8) + (blockIdx.x % oc_block_num) * (128 / 8) + (threadIdx.x % (128 / 8))) * 8;
   half* A_shared_ptr = A_shared + threadIdx.y * row_stride_warp * 32 + (threadIdx.x / (32 / 8)) * 32 + (threadIdx.x % (32 / 8)) * 8;
   int channel = threadIdx.y * (OC / 8) * 2 + threadIdx.x / (128 / 8) * (OC / 8) + (blockIdx.x % oc_block_num) * (128 / 8) + (threadIdx.x % (128 / 8));
-  int* zeros_ptr = zeros + (channel / 4);
-  half* scaling_factors_ptr = scaling_factors + (channel / 4) * 8;
+  int* zeros_ptr = zeros + (channel / 4) * 2;
+  half* scaling_factors_ptr = scaling_factors + (channel / 4) * 16;
   half* C_ptr = C + blockIdx.y * M * OC + (blockIdx.x % oc_block_num) * 128 + threadIdx.y * 64 + (threadIdx.x % 4) * 2;
 
   int k_bound = (IC / 32 + split_k_iters - 1) / split_k_iters;
   if ((k_bound - 1) * 32 + blockIdx.y >= IC) k_bound -= 1;
 
-  half B_loaded_zero[16];
-  half B_loaded_scale[16];
   #pragma unroll
   for (int _k_0_0 = 0; _k_0_0 < k_bound; ++_k_0_0) {
     int k_0_0 = _k_0_0 * split_k_iters + blockIdx.y;
@@ -1452,13 +1429,13 @@ __global__ void gemm_forward_4bit_cuda_quick_m64n128k32_sub(int G, int split_k_i
     if (ld_A_flag_4) *(uint4*)(A_shared_ptr + 48 * 32) = *(uint4*)(A_ptr + 48 * IC + (k_0_0 * 32));
     __syncthreads();
     int* B_ptr_local = B_ptr + k_0_0 * 32 * (OC / 8);
-    uint B_loaded_z = *(uint*)(zeros_ptr + ((k_0_0 * 32) / G) * (OC / 8));
-    *(uint4*)B_loaded_scale = *(uint4*)(scaling_factors_ptr + ((k_0_0 * 32) / G) * OC);
-    *(uint4*)B_loaded_zero = dequantize_s4_to_fp16x2_fused(B_loaded_z);
-    extend_scale_bias_h8_h16(B_loaded_scale);
-    extend_scale_bias_h8_h16(B_loaded_zero);
-    compute_gemm_x2(A_shared, B_ptr_local, C_warp, B_loaded_zero, B_loaded_scale);
-    compute_gemm_x2(A_shared + 32 * 32, B_ptr_local, C_warp + 64, B_loaded_zero, B_loaded_scale);
+    uint2 B_loaded_z = *(uint2*)(zeros_ptr + ((k_0_0 * 32) / G) * (OC / 8) * 2);
+    uint4 B_loaded_scale = *(uint4*)(scaling_factors_ptr + ((k_0_0 * 32) / G) * OC * 2);
+    uint4 B_loaded_scale_2 = *(uint4*)(scaling_factors_ptr + ((k_0_0 * 32) / G) * OC * 2 + 8);
+    uint4 B_loaded_zero = dequantize_s4_to_fp16x2_fused(B_loaded_z.x);
+    uint4 B_loaded_zero_2 = dequantize_s4_to_fp16x2_fused(B_loaded_z.y);
+    compute_gemm_x2(A_shared, B_ptr_local, C_warp, B_loaded_zero, B_loaded_zero_2, B_loaded_scale, B_loaded_scale_2);
+    compute_gemm_x2(A_shared + 32 * 32, B_ptr_local, C_warp + 64, B_loaded_zero, B_loaded_zero_2, B_loaded_scale, B_loaded_scale_2);
     __syncthreads();
   }
 
@@ -1473,10 +1450,10 @@ __global__ void gemm_forward_4bit_cuda_quick_m64n128k32_sub(int G, int split_k_i
     float* C_warp_local = C_warp + local_id * 2;
     #pragma unroll
     for (int chunk_id = 0; chunk_id < 4; ++chunk_id) {
-      if (row_offset_1 < M) __stcg((__half2*)(C_ptr_local + chunk_id * 16 + row_offset_1 * OC), __float22half2_rn(*(float2*)(C_warp_local + chunk_id * 8)));
-      if (row_offset_2 < M) __stcg((__half2*)(C_ptr_local + chunk_id * 16 + row_offset_2 * OC), __float22half2_rn(*(float2*)(C_warp_local + chunk_id * 8 + 32)));
-      if (row_offset_3 < M) __stcg((__half2*)(C_ptr_local + chunk_id * 16 + row_offset_3 * OC), __float22half2_rn(*(float2*)(C_warp_local + chunk_id * 8 + 64)));
-      if (row_offset_4 < M) __stcg((__half2*)(C_ptr_local + chunk_id * 16 + row_offset_4 * OC), __float22half2_rn(*(float2*)(C_warp_local + chunk_id * 8 + 96)));
+      if (row_offset_1 < M) *(__half2*)(C_ptr_local + chunk_id * 16 + row_offset_1 * OC) = __float22half2_rn(*(float2*)(C_warp_local + chunk_id * 8));
+      if (row_offset_2 < M) *(__half2*)(C_ptr_local + chunk_id * 16 + row_offset_2 * OC) = __float22half2_rn(*(float2*)(C_warp_local + chunk_id * 8 + 32));
+      if (row_offset_3 < M) *(__half2*)(C_ptr_local + chunk_id * 16 + row_offset_3 * OC) = __float22half2_rn(*(float2*)(C_warp_local + chunk_id * 8 + 64));
+      if (row_offset_4 < M) *(__half2*)(C_ptr_local + chunk_id * 16 + row_offset_4 * OC) = __float22half2_rn(*(float2*)(C_warp_local + chunk_id * 8 + 96));
     }
   }
 }
@@ -1529,14 +1506,12 @@ torch::Tensor gemm_forward_cuda_quick(
 
   auto options = torch::TensorOptions().dtype(_in_feats.dtype()).device(_in_feats.device());
   at::Tensor _workspace = torch::empty({split_k_iters, num_in_feats, _kernel.size(1) / 4 * 8}, options);
-  at::Tensor _out_feats = torch::empty({num_in_feats, _kernel.size(1) / 4 * 8}, options);
-  int num_out_feats = _out_feats.size(-2);
-  int num_out_channels = _out_feats.size(-1);
+  int num_out_feats = _workspace.size(-2);
+  int num_out_channels = _workspace.size(-1);
 
   auto in_feats = reinterpret_cast<half*>(_in_feats.data_ptr<at::Half>());
   auto kernel = reinterpret_cast<int*>(_kernel.data_ptr<int>());
   auto workspace = reinterpret_cast<half*>(_workspace.data_ptr<at::Half>());
-  auto out_feats = reinterpret_cast<half*>(_out_feats.data_ptr<at::Half>());
   auto scaling_factors = reinterpret_cast<half*>(_scaling_factors.data_ptr<at::Half>());
   auto zeros = reinterpret_cast<int*>(_zeros.data_ptr<int>());
   int group_size = num_in_channels / _scaling_factors.size(0);
@@ -1555,16 +1530,21 @@ torch::Tensor gemm_forward_cuda_quick(
       dim3 num_blocks_64(num_out_feats / 64 * oc_block_num, split_k_iters);
       gemm_forward_4bit_cuda_quick_m64n128k32<<<num_blocks_64, threads_per_block>>>(
           group_size, split_k_iters, in_feats, kernel, scaling_factors, zeros, num_in_feats, num_in_channels, num_out_channels, workspace);
-      return _workspace.sum(0);
+      if (split_k_iters > 1) return _workspace.sum(0);
+      return _workspace;
     }
     else {
       dim3 num_blocks_64((num_out_feats + 64 - 1) / 64 * oc_block_num, split_k_iters);
       gemm_forward_4bit_cuda_quick_m64n128k32_sub<<<num_blocks_64, threads_per_block>>>(
           group_size, split_k_iters, in_feats, kernel, scaling_factors, zeros, num_in_feats, num_in_channels, num_out_channels, workspace);
-      return _workspace.sum(0);
+      if (split_k_iters > 1) return _workspace.sum(0);
+      return _workspace;
     }
   }
   else if (num_in_feats > 16) {
+    at::Tensor _out_feats = torch::empty({num_in_feats, _kernel.size(1) / 4 * 8}, options);
+    auto out_feats = reinterpret_cast<half*>(_out_feats.data_ptr<at::Half>());
+
     dim3 num_blocks_32(oc_block_num, split_k_iters);
     static constexpr int NUM_THREADS_REDUCE_X = 4;
     static constexpr int NUM_THREADS_REDUCE_Y = 16;
@@ -1577,6 +1557,9 @@ torch::Tensor gemm_forward_cuda_quick(
     return _out_feats;
   }
   else if (num_in_feats == 1) {
+    at::Tensor _out_feats = torch::empty({num_in_feats, _kernel.size(1) / 4 * 8}, options);
+    auto out_feats = reinterpret_cast<half*>(_out_feats.data_ptr<at::Half>());
+
     dim3 num_blocks_1(oc_block_num, split_k_iters);
     static constexpr int NUM_THREADS_REDUCE_X = 1;
     static constexpr int NUM_THREADS_REDUCE_Y = 16;
@@ -1589,6 +1572,9 @@ torch::Tensor gemm_forward_cuda_quick(
     return _out_feats;
   }
   else {
+    at::Tensor _out_feats = torch::empty({num_in_feats, _kernel.size(1) / 4 * 8}, options);
+    auto out_feats = reinterpret_cast<half*>(_out_feats.data_ptr<at::Half>());
+
     dim3 num_blocks(oc_block_num, split_k_iters);
     static constexpr int NUM_THREADS_REDUCE_X = 2;
     static constexpr int NUM_THREADS_REDUCE_Y = 16;

@@ -118,29 +118,31 @@ class WQLinear_QUICK(nn.Module):
 
         # Pack scales
         scales = scales.t()
-        qscales = torch.zeros((scales.shape[0], scales.shape[1]), dtype=torch.float16, device=zeros.device)
+        qscales = torch.zeros((scales.shape[0], scales.shape[1] * 2), dtype=torch.float16, device=zeros.device)
         for x in range(intweight.shape[1]):
             ndx = ((x // (intweight.shape[1] // 2)) % 2) * 64 + \
                 ((x // (intweight.shape[1] // 4)) % 2) * 4 + \
                 ((x // 32) % (intweight.shape[1] // 128)) * 128 + \
                 (x % 8) * 8 + (x % 32) // 8
-            qscales[:, x] = scales[:, ndx]
+            qscales[:, x*2] = scales[:, ndx]
+            qscales[:, x*2+1] = scales[:, ndx]
 
         # Pack zeros
         zeros = zeros.t()
         zeros = zeros.to(dtype=torch.int32)
-        zeros_ext = torch.zeros((zeros.shape[0], zeros.shape[1]), dtype=torch.int32, device=zeros.device)
+        zeros_ext = torch.zeros((zeros.shape[0], zeros.shape[1] * 2), dtype=torch.int32, device=zeros.device)
         for x in range(intweight.shape[1]):
             ndx = ((x // (intweight.shape[1] // 2)) % 2) * 64 + \
                 ((x // (intweight.shape[1] // 4)) % 2) * 4 + \
                 ((x // 32) % (intweight.shape[1] // 128)) * 128 + \
                 (x % 8) * 8 + (x % 32) // 8
-            zeros_ext[:, x] = zeros[:, ndx]
+            zeros_ext[:,(x//4)*8+(x%4)] = zeros[:, ndx]
+            zeros_ext[:,(x//4)*8+(x%4)+4] = zeros[:, ndx]
 
         # Pack integer zeros
         order_map = [0, 2, 4, 6, 1, 3, 5, 7]
-        qzeros = torch.zeros((zeros.shape[0], zeros.shape[1] // (32 // awq_linear.w_bit)), dtype=torch.int32, device=zeros.device)
-        for i in range(zeros.shape[1] // (32 // awq_linear.w_bit)):
+        qzeros = torch.zeros((zeros.shape[0], zeros.shape[1] * 2 // (32 // awq_linear.w_bit)), dtype=torch.int32, device=zeros.device)
+        for i in range(zeros.shape[1] * 2 // (32 // awq_linear.w_bit)):
             zeros_col_pack = torch.zeros((zeros.shape[0],), dtype=torch.int32, device='cuda')
             for j in range(8):
                 zeros_col_pack |= zeros_ext[:, i*8+order_map[j]] << j*4
